@@ -56,6 +56,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ProgramPointer.cs" />
     <Compile Include="SplitterObjects.cs" />
     <Compile Include="SplitterSettings.cs">
       <SubType>UserControl</SubType>

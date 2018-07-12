@@ -1,88 +1,121 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 namespace LiveSplit.MasterSpy {
 	public partial class SplitterMemory {
-		public Process Program { get; set; }
+		public Process ProgramInfo { get; set; }
+		public Process ProgramWindow { get; set; }
 		public bool IsHooked { get; set; } = false;
 		public DateTime LastHooked;
+		private ProgramPointer levelName = new ProgramPointer(AutoDeref.None, new ProgramSignature(PointerVersion.Steam, "7970656C6974636865640B666C6F61746D", -12));
 		private bool setupOffsets = false;
-		private int levelTime, gameTime, missionTime;
+		private IntPtr levelTime, gameTime, missionTime, levelString;
 		public SplitterMemory() {
 			LastHooked = DateTime.MinValue;
 		}
 
 		public int GameStart() {
-			return Program.Read<int>(0x2446A1C);
+			return ProgramWindow.Read<int>(0x2446A1C);
 		}
-		public string Level() {
-			string level = Program.ReadString(11, 0x24581b0, 0x30, 0x60, 0x44, 0x28, 0x0);
-			if (!string.IsNullOrEmpty(level) && !setupOffsets) {
-				int found = 0;
-				for (int i = 1; i < 80; i++) {
-					string column = Program.ReadString(25, 0x24581b0, 0x30, 0x60, 0x44, 0xc + (0x50 * i), 0x0);
-					if (string.IsNullOrEmpty(column)) { break; }
+		private void AddInfo(HashSet<uint> pointers, Dictionary<string, string> stats, IntPtr start) {
+			IntPtr newPtr = (IntPtr)ProgramInfo.Read<uint>(start, 0x0);
+			if (pointers.Add((uint)newPtr)) {
+				AddInfo(pointers, stats, newPtr);
+			}
+			newPtr = (IntPtr)ProgramInfo.Read<uint>(start, 0x4);
+			if (pointers.Add((uint)newPtr)) {
+				AddInfo(pointers, stats, newPtr);
+			}
+			newPtr = (IntPtr)ProgramInfo.Read<uint>(start, 0x8);
+			if (pointers.Add((uint)newPtr)) {
+				AddInfo(pointers, stats, newPtr);
+			}
 
+			int size = ProgramInfo.Read<int>(start, 0x1c);
+			if (size > 0 && size < 256) {
+				string column = ProgramInfo.ReadString(start, size, 0xc, 0x0);
+				size = ProgramInfo.Read<int>(start, 0x38);
+				string value = null;
+				if (size <= 8) {
+					value = ProgramInfo.ReadString(start, size, 0x28);
+				} else {
+					value = ProgramInfo.ReadString(start, size, 0x28, 0x0);
+				}
+				if (!stats.ContainsKey(column)) {
 					switch (column) {
-						case "current_game_time": gameTime = 0x50 * i + 0x28; found++; break;
-						case "current_level_time": levelTime = 0x50 * i + 0x28; found++; break;
-						case "current_mission_time": missionTime = 0x50 * i + 0x28; found++; break;
+						case "current_game_time": gameTime = start; break;
+						case "current_level_time": levelTime = start; break;
+						case "current_mission_time": missionTime = start; break;
+						case "currentLevel": levelString = start; break;
 					}
-				}
-				if (found < 3) {
-					for (int i = -1; i > -50; i--) {
-						string column = Program.ReadString(25, 0x24581b0, 0x30, 0x60, 0x44, 0xc + (0x50 * i), 0x0);
-						if (string.IsNullOrEmpty(column)) { break; }
 
-						switch (column) {
-							case "current_game_time": gameTime = 0x50 * i + 0x28; found++; break;
-							case "current_level_time": levelTime = 0x50 * i + 0x28; found++; break;
-							case "current_mission_time": missionTime = 0x50 * i + 0x28; found++; break;
-						}
-					}
-				}
-				setupOffsets = found == 3;
-				if (!setupOffsets) {
-					setupOffsets = true;
-					System.Windows.Forms.MessageBox.Show("Failed to find all pointers, please restart game to try again.");
+					stats.Add(column, value);
 				}
 			}
-			return level;
+		}
+		private string GetColumn(IntPtr start) {
+			if (start == IntPtr.Zero) { return string.Empty; }
+			int size = ProgramInfo.Read<int>(start, 0x38);
+			string value = null;
+			if (size <= 8) {
+				value = ProgramInfo.ReadString(start, size, 0x28);
+			} else {
+				value = ProgramInfo.ReadString(start, size, 0x28, 0x0);
+			}
+			return value;
+		}
+		public string Level() {
+			IntPtr orig = (IntPtr)levelName.Read<uint>(ProgramInfo);
+			if (orig != IntPtr.Zero && !setupOffsets) {
+				Dictionary<string, string> stats = new Dictionary<string, string>();
+				HashSet<uint> pointers = new HashSet<uint>();
+				AddInfo(pointers, stats, orig);
+			}
+
+			return GetColumn(levelString);
 		}
 		public string LevelTime() {
-			string time = Program.ReadString(7, 0x24581b0, 0x30, 0x60, 0x44, levelTime);
+			string time = GetColumn(levelTime);
 			if (time.Length > 2) {
 				return time.Substring(0, time.Length - 2) + "." + time.Substring(time.Length - 2);
 			}
 			return "0." + time.PadLeft(2, '0');
 		}
 		public string GameTime() {
-			string time = Program.ReadString(7, 0x24581b0, 0x30, 0x60, 0x44, gameTime);
+			string time = GetColumn(gameTime);
 			if (time.Length > 2) {
 				return time.Substring(0, time.Length - 2) + "." + time.Substring(time.Length - 2);
 			}
 			return "0." + time.PadLeft(2, '0');
 		}
 		public string MissionTime() {
-			string time = Program.ReadString(7, 0x24581b0, 0x30, 0x60, 0x44, missionTime);
+			string time = GetColumn(missionTime);
 			if (time.Length > 2) {
 				return time.Substring(0, time.Length - 2) + "." + time.Substring(time.Length - 2);
 			}
 			return "0." + time.PadLeft(2, '0');
 		}
 		public bool HookProcess() {
-			IsHooked = Program != null && !Program.HasExited;
+			IsHooked = ProgramInfo != null && !ProgramInfo.HasExited;
 			if (!IsHooked && DateTime.Now > LastHooked.AddSeconds(1)) {
 				LastHooked = DateTime.Now;
 				Process[] processes = Process.GetProcessesByName("MasterSpy");
-				Program = null;
+				ProgramInfo = null;
+				long maxSize = 0;
 				for (int i = processes != null ? processes.Length - 1 : -1; i >= 0; i--) {
-					if (processes[i].MainWindowHandle != IntPtr.Zero) {
-						Program = processes[i];
-						break;
+					Process process = processes[i];
+					if (process.StartTime.AddSeconds(10) > DateTime.Now) { break; }
+
+					if (process.MainWindowHandle != IntPtr.Zero) {
+						ProgramWindow = processes[i];
+					}
+					if (process.WorkingSet64 > maxSize) {
+						maxSize = process.WorkingSet64;
+						ProgramInfo = process;
 					}
 				}
 
-				if (Program != null && !Program.HasExited) {
+				if (ProgramInfo != null && !ProgramInfo.HasExited) {
 					setupOffsets = false;
 					IsHooked = true;
 				}
@@ -91,8 +124,11 @@ namespace LiveSplit.MasterSpy {
 			return IsHooked;
 		}
 		public void Dispose() {
-			if (Program != null) {
-				Program.Dispose();
+			if (ProgramInfo != null) {
+				ProgramInfo.Dispose();
+			}
+			if (ProgramWindow != null) {
+				ProgramWindow.Dispose();
 			}
 		}
 	}

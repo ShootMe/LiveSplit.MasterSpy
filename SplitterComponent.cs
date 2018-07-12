@@ -1,32 +1,33 @@
 ﻿using LiveSplit.Model;
 using LiveSplit.UI;
 using LiveSplit.UI.Components;
-using System;
-using System.Collections.Generic;
 using System.Drawing;
-using System.IO;
 using System.Windows.Forms;
 using System.Xml;
+using System;
+using System.Collections.Generic;
+using System.IO;
 namespace LiveSplit.MasterSpy {
+#if !DEBUG
 	public class SplitterComponent : IComponent {
-		public string ComponentName { get { return "Master Spy Autosplitter"; } }
 		public TimerModel Model { get; set; }
+#else
+	public class SplitterComponent {
+#endif
+		public string ComponentName { get { return "Master Spy Autosplitter"; } }
 		public IDictionary<string, Action> ContextMenuControls { get { return null; } }
 		private static string LOGFILE = "_MasterSpy.log";
 		private Dictionary<LogObject, string> currentValues = new Dictionary<LogObject, string>();
 		private SplitterMemory mem;
-		private int currentSplit = -1, lastLogCheck = 0, lastValue = 0;
+		private int currentSplit = -1, lastLogCheck = 0;
 		private bool hasLog = false;
+		private Dictionary<string, string> gameStats = new Dictionary<string, string>();
+		private SplitterSettings settings;
+#if !DEBUG
+		private int lastValue = 0;
 		private string lastLevel;
 		private DateTime lastChanged;
-		private SplitterSettings settings;
-
 		public SplitterComponent(LiveSplitState state) {
-			mem = new SplitterMemory();
-			foreach (LogObject key in Enum.GetValues(typeof(LogObject))) {
-				currentValues[key] = "";
-			}
-
 			if (state != null) {
 				Model = new TimerModel() { CurrentState = state };
 				state.OnReset += OnReset;
@@ -37,19 +38,26 @@ namespace LiveSplit.MasterSpy {
 				state.OnUndoSplit += OnUndoSplit;
 				state.OnSkipSplit += OnSkipSplit;
 			}
-
+#else
+		public SplitterComponent(object state) {
+#endif
+			mem = new SplitterMemory();
+			foreach (LogObject key in Enum.GetValues(typeof(LogObject))) {
+				currentValues[key] = "";
+			}
 			settings = new SplitterSettings();
 		}
 
 		public void GetValues() {
 			if (!mem.HookProcess()) { return; }
-
+#if !DEBUG
 			if (Model != null) {
 				HandleSplits();
 			}
-
+#endif
 			LogValues();
 		}
+#if !DEBUG
 		private void HandleSplits() {
 			bool shouldSplit = false;
 
@@ -139,38 +147,6 @@ namespace LiveSplit.MasterSpy {
 				}
 			}
 		}
-		private void LogValues() {
-			if (lastLogCheck == 0) {
-				hasLog = File.Exists(LOGFILE);
-				lastLogCheck = 300;
-			}
-			lastLogCheck--;
-
-			if (hasLog || !Console.IsOutputRedirected) {
-				string prev = string.Empty, curr = string.Empty;
-				foreach (LogObject key in Enum.GetValues(typeof(LogObject))) {
-					prev = currentValues[key];
-
-					switch (key) {
-						case LogObject.CurrentSplit: curr = currentSplit.ToString(); break;
-						case LogObject.GameStart: curr = mem.GameStart().ToString(); break;
-						case LogObject.Level: curr = mem.Level(); break;
-						case LogObject.LevelTime: curr = mem.LevelTime(); break;
-						case LogObject.GameTime: curr = mem.GameTime(); break;
-						case LogObject.MissionTime: curr = mem.MissionTime(); break;
-						default: curr = string.Empty; break;
-					}
-
-					if (string.IsNullOrEmpty(prev)) { prev = string.Empty; }
-					if (string.IsNullOrEmpty(curr)) { curr = string.Empty; }
-					if (!prev.Equals(curr)) {
-						WriteLogWithTime(key + ": ".PadRight(16 - key.ToString().Length, ' ') + prev.PadLeft(25, ' ') + " -> " + curr);
-
-						currentValues[key] = curr;
-					}
-				}
-			}
-		}
 		public void Update(IInvalidator invalidator, LiveSplitState lvstate, float width, float height, LayoutMode mode) {
 			GetValues();
 		}
@@ -206,6 +182,44 @@ namespace LiveSplit.MasterSpy {
 				WriteLog("---------" + settings.Splits[currentSplit].ToString());
 			}
 		}
+		public Control GetSettingsControl(LayoutMode mode) { return settings; }
+		public void SetSettings(XmlNode document) { settings.SetSettings(document); }
+		public XmlNode GetSettings(XmlDocument document) { return settings.UpdateSettings(document); }
+		public void DrawHorizontal(Graphics g, LiveSplitState state, float height, Region clipRegion) { }
+		public void DrawVertical(Graphics g, LiveSplitState state, float width, Region clipRegion) { }
+#endif
+		private void LogValues() {
+			if (lastLogCheck == 0) {
+				hasLog = File.Exists(LOGFILE);
+				lastLogCheck = 300;
+			}
+			lastLogCheck--;
+
+			if (hasLog || !Console.IsOutputRedirected) {
+				string prev = string.Empty, curr = string.Empty;
+				foreach (LogObject key in Enum.GetValues(typeof(LogObject))) {
+					prev = currentValues[key];
+
+					switch (key) {
+						case LogObject.CurrentSplit: curr = currentSplit.ToString(); break;
+						case LogObject.GameStart: curr = mem.GameStart().ToString(); break;
+						case LogObject.Level: curr = mem.Level(); break;
+						case LogObject.LevelTime: curr = mem.LevelTime(); break;
+						case LogObject.GameTime: curr = mem.GameTime(); break;
+						case LogObject.MissionTime: curr = mem.MissionTime(); break;
+						default: curr = string.Empty; break;
+					}
+
+					if (string.IsNullOrEmpty(prev)) { prev = string.Empty; }
+					if (string.IsNullOrEmpty(curr)) { curr = string.Empty; }
+					if (!prev.Equals(curr)) {
+						WriteLogWithTime(key + ": ".PadRight(16 - key.ToString().Length, ' ') + prev.PadLeft(25, ' ') + " -> " + curr);
+
+						currentValues[key] = curr;
+					}
+				}
+			}
+		}
 		private void WriteLog(string data) {
 			if (hasLog || !Console.IsOutputRedirected) {
 				if (Console.IsOutputRedirected) {
@@ -218,14 +232,12 @@ namespace LiveSplit.MasterSpy {
 			}
 		}
 		private void WriteLogWithTime(string data) {
+#if !DEBUG
 			WriteLog(DateTime.Now.ToString(@"HH\:mm\:ss.fff") + (Model != null && Model.CurrentState.CurrentTime.RealTime.HasValue ? " | " + Model.CurrentState.CurrentTime.RealTime.Value.ToString("G").Substring(3, 11) : "") + ": " + data);
+#else
+			WriteLog(DateTime.Now.ToString(@"HH\:mm\:ss.fff") + ": " + data);
+#endif
 		}
-
-		public Control GetSettingsControl(LayoutMode mode) { return settings; }
-		public void SetSettings(XmlNode document) { settings.SetSettings(document); }
-		public XmlNode GetSettings(XmlDocument document) { return settings.UpdateSettings(document); }
-		public void DrawHorizontal(Graphics g, LiveSplitState state, float height, Region clipRegion) { }
-		public void DrawVertical(Graphics g, LiveSplitState state, float width, Region clipRegion) { }
 		public float HorizontalWidth { get { return 0; } }
 		public float MinimumHeight { get { return 0; } }
 		public float MinimumWidth { get { return 0; } }
